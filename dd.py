@@ -60,6 +60,14 @@ __fmt2ct__ = {  2:ctypes.c_char,   3:ctypes.c_int16,   4:ctypes.c_int32,
                 5:ctypes.c_float,  6:ctypes.c_double,  9:ctypes.c_uint16,
                13:ctypes.c_int64, 14:ctypes.c_uint32, 15:ctypes.c_uint64  }
 
+#Define custom exceptions to allow proper error handling
+class PyddError(Exception):   
+    '''Generic exception of py-dd wrapper, catch with "try ... except dd.PyddError:".''' #called by "PyddError('arbitrary string')"
+class NoShotfileError(PyddError): 
+    '''Exception to be raised when trying to access data with no shotfile opened.'''   #catch with "except dd.PyddError" and "except NoShotfileError"
+    
+                  
+               
 def getError(error):
     """ Check if an error/warning occured. """
     try:
@@ -77,7 +85,10 @@ def getError(error):
         ctrl = ctypes.byref(ctypes.c_uint32(3))
         __libddww__.xxerrprt_(unit, text, ctypes.byref(err), ctrl, id, ltext, lid);
         if isError:
-            raise Exception(text.value.strip())
+            if err.value == 553713686:
+                raise NoShotfileError(text.value.strip())
+            else:
+                raise PyddError('libddww error: ' +text.value.strip())
         else:
             warnings.warn(text.value.strip(), RuntimeWarning)
 
@@ -406,7 +417,7 @@ class signal(object):
 
     def __call__(self, tBegin, tEnd):
         if self.time==None:
-            raise Exception('Signal is not time dependent.')
+            raise PyddError('Signal is not time dependent.')
         if tBegin == tEnd:
             index = numpy.argmin(numpy.abs(self.time - tBegin))
         else:
@@ -535,7 +546,7 @@ class signalGroup(object):
 
     def __call__(self, tBegin, tEnd):
         if self.time==None:
-            raise Exception('SignalGroup is not time dependent.')
+            raise PyddError('SignalGroup is not time dependent.')
         if tBegin == tEnd:
             index = numpy.argmin(numpy.abs(self.time - tBegin))
         else:
@@ -549,7 +560,7 @@ class signalGroup(object):
             if self.data.ndim == numpy.size(indices):
                 return signal(self.name, self.header, self.data[indices], None, self.unit)
             else:
-                raise Exception('Wrong number of indices provided. Get %d needed %d.' % (numpy.size(indices), self.data.ndim))
+                raise TypeError('Wrong number of indices provided. Get %d needed %d.' % (numpy.size(indices), self.data.ndim))
         else:
             if self.data.ndim-1 == numpy.size(indices):
                 if numpy.size(indices)==1:
@@ -562,7 +573,7 @@ class signalGroup(object):
                 elif numpy.size(indices)==3:
                     return signal(self.name, self.header, self.data[:,indices[0], indices[1], indices[2]], self.time, self.unit)
                 else:
-                    raise Exception('Invalid number of indices: Got %d needed %d' % (numpy.size(indices), (self.data.nnim-1)))
+                    raise TypeError('Invalid number of indices: Got %d needed %d' % (numpy.size(indices), (self.data.nnim-1)))
 
     def max(self, axis=None):
         return numpy.nanmax(self.data, axis=axis)
@@ -673,7 +684,11 @@ class shotfile(object):
         ldate = ctypes.c_uint64(18)
         result = __libddww__.ddopen_(ctypes.byref(error),exper,diag,_shot,_edit,ctypes.byref(self.diaref),
                                      date,lexp,ldiag,ldate)
-        getError(error)
+        try:
+            getError(error)
+        except NoShotfileError:  #catch exception to print shot number and diagnostic
+            print 'Pulse ', pulseNumber, '; diagnostic', diagnostic
+            raise    #re-raise the exception
         self.shot = int(shot.value)
         self.edition = edit.value
         self.date = date.value
@@ -691,7 +706,7 @@ class shotfile(object):
     def getObjectName(self, objectNumber):
         """ Return name of object """
         if not self.status:
-            raise Exception('Shotfile not open!')
+            raise PyddError('Shotfile not open!')
         error = ctypes.c_int32(0)
         lname = ctypes.c_uint64(8)
         try:
@@ -707,7 +722,7 @@ class shotfile(object):
     def getObjectNames(self):
         """ Return list of all object names in the shotfile. """
         if not self.status:
-            raise Exception('Shotfile not open!')
+            raise PyddError('Shotfile not open!')
         output = {}
         counter = 0
         while True:
@@ -729,7 +744,7 @@ class shotfile(object):
     def getSignalNames(self):
         """ Return list of all signal names in the shotfile. """
         if not self.status:
-            raise Exception('Shotfile not open!')
+            raise PyddError('Shotfile not open!')
         output = []
         names = self.getObjectNames()
         for key in names.keys():
@@ -741,7 +756,7 @@ class shotfile(object):
     def getSignalGroupNames(self):
         """ Return list of all signalgroup names in the shotfile. """
         if not self.status:
-            raise Exception('Shotfile not open!')
+            raise PyddError('Shotfile not open!')
         output = []
         names = self.getObjectNames()
         for key in names.keys():
@@ -753,7 +768,7 @@ class shotfile(object):
     def getSignalInfo(self, name):
         """ Returns a signalInfo object containing the information of the signal name """
         if not self.status:
-            raise Exception('Shotfile not open!')
+            raise PyddError('Shotfile not open!')
         header = self.getObjectHeader(name)
         error = ctypes.c_int32(0)
         lsig = ctypes.c_uint64(len(name))
@@ -780,7 +795,7 @@ class shotfile(object):
     def getObjectValue(self, name, field):
         """ Returns the value for the specified field for the given object name. """
         if not self.status:
-            raise Exception('Shotfile not open')
+            raise PyddError('Shotfile not open')
         error = ctypes.c_int32(0)
         data = __fields__[field]()
         try:
@@ -829,12 +844,12 @@ class shotfile(object):
         plt.plot(Bt.time, Bt.data)
         plt.show() """
         if not self.status:
-            raise Exception('Shotfile not open!')
+            raise PyddError('Shotfile not open!')
         objectType = self.getObjectValue(name, 'objtype')
         if objectType==4:
             return self.getParameterSet(name, dtype=dtype)
         elif objectType==5:
-            raise Exception('Mapping function not yet implemented.')
+            raise PyddError('Mapping function not yet implemented.')
         elif objectType==6:
             if calibrated:
                 if index==None:
@@ -873,14 +888,14 @@ class shotfile(object):
         elif objectType==13:
             return self.getAreaBase(name)
         else:
-            raise Exception('Unsupported object type %d for object %s' % (objectType, name))
+            raise PyddError('Unsupported object type %d for object %s' % (objectType, name))
 
     def getSignal(self, name, dtype=None, tBegin=None, tEnd=None):
         """ Return uncalibrated signal. If dtype is specified the data is
         converted accordingly, else the data is returned in the format used
         in the shotfile. """
         if not self.status:
-            raise Exception('Shotfile not open!')
+            raise PyddError('Shotfile not open!')
         info = self.getSignalInfo(name)
         try:
             tInfo = self.getTimeBaseInfo(name)
@@ -923,7 +938,7 @@ class shotfile(object):
         """ Return calibrated signal. If dtype is specified the data is
         converted accordingly, else the data is returned as numpy.float32. """
         if not self.status:
-            raise Exception('Shotfile not open!')
+            raise PyddError('Shotfile not open!')
         info = self.getSignalInfo(name)
         try:
             tInfo = self.getTimeBaseInfo(name)
@@ -966,7 +981,7 @@ class shotfile(object):
         converted accordingly, else the data is returned in the format used
         in the shotfile. """
         if not self.status:
-            raise Exception('Shotfile not open!')
+            raise PyddError('Shotfile not open!')
         info = self.getSignalInfo(name)
         try:
             tInfo = self.getTimeBaseInfo(name)
@@ -1018,7 +1033,7 @@ class shotfile(object):
         data is converted accordingly, else the data is returned in the format
         used in the shotfile. """
         if not self.status:
-            raise Exception('Shotfile not open!')
+            raise PyddError('Shotfile not open!')
         info = self.getSignalInfo(name)
         try:
             tInfo = self.getTimeBaseInfo(name)
@@ -1072,7 +1087,7 @@ class shotfile(object):
         the data is converted accordingly, else the data is returned in the format used
         in the shotfile. """
         if not self.status:
-            raise Exception('Shotfile not open!')
+            raise PyddError('Shotfile not open!')
         info = self.getSignalInfo(name)
         try:
             tInfo = self.getTimeBaseInfo(name)
@@ -1127,7 +1142,7 @@ class shotfile(object):
     
     def getSignalGroupCalibrated(self, name, dtype=numpy.float32, tBegin=None, tEnd=None):
         if not self.status:
-            raise Exception('Shotfile not open!')
+            raise PyddError('Shotfile not open!')
         info = self.getSignalInfo(name)
         try:
             tInfo = self.getTimeBaseInfo(name)
@@ -1175,7 +1190,7 @@ class shotfile(object):
     def getTimeBaseInfo(self, name):
         """ Return information regarding timebase corresponding to name. """
         if not self.status:
-            raise Exception('Shotfile not open!')
+            raise PyddError('Shotfile not open!')
         signalInfo = self.getSignalInfo(name)
         error = ctypes.c_int32(0)
         lsig = ctypes.c_uint64(len(name))
@@ -1198,7 +1213,7 @@ class shotfile(object):
     def getTimeBase(self, name, dtype=numpy.float32, tBegin=None, tEnd=None):
         """ Return timebase corresponding to name. """
         if not self.status:
-            raise Exception('Shotfile not open!')
+            raise PyddError('Shotfile not open!')
         info = self.getSignalInfo(name)
         tInfo = self.getTimeBaseInfo(name)
         if info.timeBase != name:
@@ -1235,7 +1250,7 @@ class shotfile(object):
     def getTimeBaseIndices(self, name, tBegin, tEnd):
         """ Return time indices of name corresponding to tBegin and tEnd """
         if not self.status:
-            raise Exception('Shotfile not open!')
+            raise PyddError('Shotfile not open!')
         try:
             sigName = ctypes.c_char_p(name)
         except TypeError:
@@ -1268,7 +1283,7 @@ class shotfile(object):
 
     def getParameterSetInfo(self, name):
         if not self.status:
-            raise Exception('Shotfile not open!')
+            raise PyddError('Shotfile not open!')
         error = ctypes.c_int32(0)
         try:
             parName = ctypes.c_char_p(name)
@@ -1292,7 +1307,7 @@ class shotfile(object):
 
     def getParameterInfo(self, setName, parName):
         if not self.status:
-            raise Exception('Shotfile not open!')
+            raise PyddError('Shotfile not open!')
         error = ctypes.c_int32(0)
         try:
             set = ctypes.c_char_p(setName)
@@ -1313,7 +1328,7 @@ class shotfile(object):
 
     def getParameter(self, setName, parName, dtype=None):
         if not self.status:
-            raise Exception('Shotfile not open!')
+            raise PyddError('Shotfile not open!')
         info = self.getParameterInfo(setName, parName)
         error = ctypes.c_int32(0)
         try:
@@ -1345,7 +1360,7 @@ class shotfile(object):
 
     def getParameterSet(self, setName, dtype=None):
         if not self.status:
-            raise Exception('Shotfile not open!')
+            raise PyddError('Shotfile not open!')
         info = self.getParameterSetInfo(setName)
         output = parameterSet(setName)
         for name in info.names:
@@ -1354,7 +1369,7 @@ class shotfile(object):
 
     def getList(self, name):
         if not self.status:
-            raise Exception('Shotfile not open!')
+            raise PyddError('Shotfile not open!')
         try:
             nam = ctypes.c_char_p(name)
         except TypeError:
@@ -1373,7 +1388,7 @@ class shotfile(object):
 
     def getMappingInfo(self, name, indices=None):
         if not self.status:
-            raise Exception('Shotfile not open!')
+            raise PyddError('Shotfile not open!')
         if indices==None:
             indices = numpy.ones(3, dtype=numpy.uint32)
         else:
@@ -1394,7 +1409,7 @@ class shotfile(object):
     def GetSignal(self, name, cal=False):
         warnings.warn('GetSignal will be removed in the future.', DeprecationWarning)
         if not self.status:
-            raise Exception('Shotfile not open!')
+            raise PyddError('Shotfile not open!')
         objectType = self.getObjectValue(name, 'objtype')
         if objectType==6:
             if cal:
@@ -1407,11 +1422,11 @@ class shotfile(object):
             else:
                 return self.getSignal(name)
         else:
-            raise Exception('Unsupported object type: %d' % objectType)
+            raise PyddError('Unsupported object type: %d' % objectType)
 
     def getAreaBaseInfo(self, name):
         if not self.status:
-            raise Exception('Shotfile not open!')
+            raise PyddError('Shotfile not open!')
         header = self.getObjectHeader(name)
         if header.objectType=='Area_Base':
             for el in self.getRelatingObjects(name):
@@ -1439,7 +1454,7 @@ class shotfile(object):
 
     def getAreaBase(self, name, dtype=numpy.float32, tBegin=None, tEnd=None):
         if not self.status:
-            raise Exception('Shotfile not open')
+            raise PyddError('Shotfile not open')
         header = self.getObjectHeader(name)
         if header.objectType=='Area_Base':
             return areaBase(name, header, self.getObjectData(name))
@@ -1463,7 +1478,7 @@ class shotfile(object):
 
     def getQualifierInfo(self, name):
         if not self.status:
-            raise Exception('Shotfile not open!')
+            raise PyddError('Shotfile not open!')
         error = ctypes.c_int32(0)
         try:
             sigName = ctypes.c_char_p(name)
@@ -1480,7 +1495,7 @@ class shotfile(object):
 
     def getQualifier(self, name):
         if not self.status:
-            raise Exception('Shotfile not open!')
+            raise PyddError('Shotfile not open!')
         error = ctypes.c_int32(0)
         info = self.getQualifierInfo(name)
         try:
@@ -1501,7 +1516,7 @@ class shotfile(object):
     def getObjectHeader(self, name):
         """ Returns the object header of a given object."""
         if not self.status:
-            raise Exception('Shotfile not open!')
+            raise PyddError('Shotfile not open!')
         text = 64*b' '
         error   = ctypes.c_int32(0)
         try:
@@ -1530,7 +1545,7 @@ class shotfile(object):
     def getRelations(self, name):
         """ Returns all relations of a given object."""
         if not self.status:
-            raise Exception('Shotfile not open!')
+            raise PyddError('Shotfile not open!')
 
         rel_out = dd_info()
         head = self.getObjectHeader(name)
@@ -1555,7 +1570,7 @@ class shotfile(object):
     def getInfo(self, name):
         """ Returns information about the specified signal."""
         if not self.status:
-            raise Exception('Shotfile not open!')
+            raise PyddError('Shotfile not open!')
 
         output = dd_info()
         rel = self.getRelations(name)
@@ -1649,7 +1664,7 @@ class shotfile(object):
 
     def getObjectData(self, name):
         if not self.status:
-            raise Exception('Shotfile not open.')
+            raise PyddError('Shotfile not open.')
         header = self.getObjectHeader(name)
         try:
             name_ = ctypes.c_char_p(name)
@@ -1676,7 +1691,7 @@ class shotfile(object):
 
     def getRelatingObjects(self, name):
         if not self.status:
-            raise Exception('Shotfile not open')
+            raise PyddError('Shotfile not open')
         names = self.getObjectNames()
         output = []
         for i in names:
